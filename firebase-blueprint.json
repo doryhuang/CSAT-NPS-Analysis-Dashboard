@@ -1,0 +1,22 @@
+{
+  "entities": {
+    "report": {
+      "title": "Analysis Report",
+      "description": "A saved analysis report containing feedback data and stats.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the report." },
+        "analyzedData": { "type": "array", "description": "The list of analyzed feedback items." },
+        "stats": { "type": "object", "description": "The dashboard statistics." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the report was saved." }
+      },
+      "required": ["title", "analyzedData", "stats", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/reports/{reportId}": {
+      "schema": "report",
+      "description": "Collection of saved reports."
+    }
+  }
+}
