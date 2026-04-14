@@ -24,13 +24,24 @@ export async function analyzeFeedbackBatch(feedbacks: RawFeedback[]): Promise<An
     }
 
     // Sentiment - Refined logic
-    const positiveKeywords = ['非常滿意', '加薪', '超乎預期', '迅速有禮', '很棒', '感謝', '推薦', '很好', '喜歡', '幫助很大', '效率高', '讚', '推', '留住了', '積極'];
-    const hasStrongPositive = positiveKeywords.some(k => combinedText.includes(k));
+    const positiveKeywords = [
+      '非常滿意', '加薪', '超乎預期', '迅速有禮', '很棒', '感謝', '推薦', '很好', '喜歡', '幫助很大', '效率高', '讚', '推', '留住了', '積極',
+      'excellent', 'great', 'awesome', 'thank', 'recommend', 'helpful', 'efficient', 'satisfied', 'love', 'perfect',
+      '満足', '感謝', '素晴らしい', 'おすすめ', '助かる', '速い', '丁寧', '大好き', '良い', '最高', 'ありがとう', '満足しています'
+    ];
+    const negativeKeywords = [
+      '不滿', '太慢', '很差', '沒解決', '沒人理', '垃圾', '難用', '斷線', '故障', '壞了', '浪費', '貴', '失望', '生氣', '爛',
+      'disappointed', 'slow', 'bad', 'not resolved', 'waste', 'expensive', 'useless', 'broken', 'failed', 'terrible', 'angry',
+      '不満', '遅い', '悪い', '解決しない', '返事がない', '最悪', '使いにくい', '検知されない', '故障', '壊れた', '無駄', '高い', '失望', '怒り'
+    ];
+
+    const hasStrongPositive = positiveKeywords.some(k => combinedText.includes(k.toLowerCase()));
+    const hasStrongNegative = negativeKeywords.some(k => combinedText.includes(k.toLowerCase()));
 
     let sentiment: 'positive' | 'neutral' | 'negative' = 'neutral';
     if (hasStrongPositive || f.csatScore >= 4 || f.npsScore >= 9) {
       sentiment = 'positive';
-    } else if (f.csatScore <= 2 || f.npsScore <= 6) {
+    } else if (hasStrongNegative || f.csatScore <= 2 || f.npsScore <= 6) {
       sentiment = 'negative';
     }
 
@@ -118,6 +129,12 @@ export async function analyzeFeedbackBatch(feedbacks: RawFeedback[]): Promise<An
         contents: prompt,
         config: {
           responseMimeType: "application/json",
+          safetySettings: [
+            { category: "HARM_CATEGORY_HATE_SPEECH" as any, threshold: "BLOCK_NONE" as any },
+            { category: "HARM_CATEGORY_HARASSMENT" as any, threshold: "BLOCK_NONE" as any },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT" as any, threshold: "BLOCK_NONE" as any },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT" as any, threshold: "BLOCK_NONE" as any },
+          ],
           responseSchema: {
             type: Type.ARRAY,
             items: {
@@ -169,61 +186,85 @@ export async function analyzeFeedbackBatch(feedbacks: RawFeedback[]): Promise<An
   return baselineAnalyzed;
 }
 
-export async function generateAISummary(analyzedData: AnalyzedFeedback[], viewMode: 'CS' | 'PM'): Promise<string> {
-  if (analyzedData.length === 0) return "尚無資料可分析。";
-
+export async function generateAISummary(analyzedData: AnalyzedFeedback[], viewMode: 'CS' | 'PM', language: 'zh' | 'en' = 'zh'): Promise<string> {
   const isCS = viewMode === 'CS';
+  const isZh = language === 'zh';
+
+  if (analyzedData.length === 0) return isZh ? "尚無資料可分析。" : "No data available for analysis.";
+
+  // Filter for negative feedback first
+  let targetFeedback = analyzedData.filter(f => f.sentiment === 'negative' && (isCS ? true : f.isProductRelated));
   
-  const negativeFeedback = analyzedData
-    .filter(f => f.sentiment === 'negative' && (isCS ? true : f.isProductRelated))
+  // If no negative feedback, look for "Other" or "Neutral" feedback that might contain issues
+  if (targetFeedback.length === 0) {
+    targetFeedback = analyzedData.filter(f => f.sentiment !== 'positive' && (isCS ? true : f.isProductRelated));
+  }
+
+  // If still no data, or only positive data exists
+  if (targetFeedback.length === 0) {
+    return isZh ? "目前篩選條件下無明顯負面回饋或待改進事項。" : "No significant negative feedback or issues found under the current filters.";
+  }
+  
+  const feedbackText = targetFeedback
     .map(f => {
       if (isCS) {
-        return `[ID: ${f.ticketId}] [${f.isProductRelated ? '產品' : '客服'}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
+        return `[ID: ${f.ticketId}] [${f.isProductRelated ? (isZh ? '產品' : 'Product') : (isZh ? '客服' : 'Service')}] [Score: ${f.csatScore}/${f.npsScore}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
       } else {
-        // PM view: No ticket IDs
-        return `[議題: ${f.subCategory}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
+        return `[Issue: ${f.subCategory}] [Score: ${f.csatScore}/${f.npsScore}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
       }
     })
-    .slice(0, 30)
+    .slice(0, 40)
     .join("\n");
 
   const prompt = isCS ? `
-    你是一個專業的客服主管。請針對以下用戶回饋進行精簡且專業的分析。
+    You are a professional Customer Service Manager. Please provide a concise and professional analysis of the following user feedback (which may be in Chinese, English, or Japanese).
     
-    分析重點：客服服務品質、回覆速度、態度，以及產品問題對客服的影響。
+    Analysis Focus: Service quality, response speed, attitude, and the impact of product issues on customer service.
     
-    格式要求 (請嚴格遵守)：
-    - 使用 Markdown 格式。
-    - **深度分析報告**：請分成 2-3 個小段落，每段加上小標題。使用**粗體**標示關鍵痛點。
-    - **會議重點說明 (Meeting Summary)**：使用「無序列表 (Bullet points)」提供 3 句精簡的重點。
+    Output Language: ${isZh ? 'Traditional Chinese (zh-TW)' : 'English (en)'}
     
-    用戶回饋：
-    ${negativeFeedback}
+    Format Requirements (Strictly follow):
+    - Use Markdown format.
+    - **Deep Analysis Report**: Divide into 2-3 small paragraphs, each with a sub-heading. Use **bold** to highlight key pain points.
+    - **Meeting Summary**: Provide 3 concise bullet points.
     
-    請直接輸出格式化後的總結文字。
+    User Feedback:
+    ${feedbackText}
+    
+    Please output the formatted summary text directly.
   ` : `
-    你是一個專業的產品經理。請針對以下用戶回饋進行專業分析。
+    You are a professional Product Manager. Please provide a professional analysis of the following user feedback (which may be in Chinese, English, or Japanese).
     
-    **重要指令：**
-    1. **只專注於產品內容**：分析重點應完全放在產品功能缺陷、穩定性、用戶痛點、改進方向、硬體問題或 App UI。
-    2. **排除客服內容**：請完全忽略任何關於客服態度、回覆速度、工單處理流程等服務相關的描述。
-    3. **嚴禁工單號碼**：不要在總結中提到任何工單號碼 (Ticket ID)。
+    **Important Instructions:**
+    1. **Focus only on product content**: Analysis should be entirely on product functional defects, stability, user pain points, improvement directions, hardware issues, or App UI.
+    2. **Exclude service content**: Completely ignore any descriptions regarding customer service attitude, response speed, ticket handling processes, etc.
+    3. **Strictly no ticket IDs**: Do not mention any ticket IDs in the summary.
     
-    格式要求 (請嚴格遵守)：
-    - 使用 Markdown 格式。
-    - **深度分析報告**：請依據「問題現況」、「影響評估」、「建議行動」三個小標題進行分析。使用**粗體**標示關鍵議題。
-    - **會議重點說明 (Meeting Summary)**：使用「無序列表 (Bullet points)」提供 3-5 句精簡、有力、可直接在會議中報告的重點。
+    Output Language: ${isZh ? 'Traditional Chinese (zh-TW)' : 'English (en)'}
     
-    用戶回饋：
-    ${negativeFeedback}
+    Format Requirements (Strictly follow):
+    - Use Markdown format.
+    - **Deep Analysis Report**: Analyze based on three sub-headings: "Current Issues", "Impact Assessment", and "Recommended Actions". Use **bold** to highlight key issues.
+    - **Meeting Summary**: Provide 3-5 concise, powerful bullet points that can be reported directly in a meeting.
     
-    請直接輸出格式化後的總結文字。
+    User Feedback:
+    ${feedbackText}
+    
+    Please output the formatted summary text directly.
   `;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
+      config: {
+        safetySettings: [
+          { category: "HARM_CATEGORY_HATE_SPEECH" as any, threshold: "BLOCK_NONE" as any },
+          { category: "HARM_CATEGORY_HARASSMENT" as any, threshold: "BLOCK_NONE" as any },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT" as any, threshold: "BLOCK_NONE" as any },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT" as any, threshold: "BLOCK_NONE" as any },
+        ]
+      }
     });
     return response.text || "無法產生 AI 總結。";
   } catch (error) {
@@ -282,11 +323,11 @@ export function calculateBasicStats(data: AnalyzedFeedback[]): Omit<DashboardSta
   };
 }
 
-export async function calculateStats(analyzedData: AnalyzedFeedback[]): Promise<DashboardStats> {
+export async function calculateStats(analyzedData: AnalyzedFeedback[], language: 'zh' | 'en' = 'zh'): Promise<DashboardStats> {
   const basicStats = calculateBasicStats(analyzedData);
   
-  const aiSummaryCS = await generateAISummary(analyzedData, 'CS');
-  const aiSummaryPM = await generateAISummary(analyzedData, 'PM');
+  const aiSummaryCS = await generateAISummary(analyzedData, 'CS', language);
+  const aiSummaryPM = await generateAISummary(analyzedData, 'PM', language);
 
   return {
     ...basicStats,

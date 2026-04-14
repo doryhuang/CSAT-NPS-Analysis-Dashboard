@@ -21,7 +21,6 @@ import {
   Trash2,
   X,
   ExternalLink,
-  Download,
   ChevronDown
 } from 'lucide-react';
 import { RawFeedback, AnalyzedFeedback, DashboardStats, CATEGORY_PATTERNS } from './types';
@@ -48,8 +47,12 @@ export default function App() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('CS');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState<string>('');
   const [filterType, setFilterType] = useState<'all' | 'product' | 'service'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
+  const [reportLanguage, setReportLanguage] = useState<'zh' | 'en'>('zh');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -104,23 +107,6 @@ export default function App() {
     const newStats = calculateBasicStats(newData);
     setStats(prev => prev ? { ...prev, ...newStats } : null);
     setEditingFeedback(null);
-  };
-
-  const downloadReport = (type: 'full' | 'pm') => {
-    if (!stats) return;
-    let content = "";
-    if (type === 'full') {
-      content = `# 客服與產品分析報告 - ${reportTitle || new Date().toLocaleDateString()}\n\n## 客服視角洞察\n${stats.aiSummaryCS}\n\n## 產品視角洞察\n${stats.aiSummaryPM}`;
-    } else {
-      content = `# 產品分析報告 - ${reportTitle || new Date().toLocaleDateString()}\n\n## 產品視角洞察\n${stats.aiSummaryPM}`;
-    }
-    const blob = new Blob([content], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${reportTitle || 'report'}_${type}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   // Load report from URL if present
@@ -185,25 +171,32 @@ export default function App() {
     }
 
     setIsAnalyzing(true);
+    setAnalysisStep('正在讀取數據...');
     setCurrentPage(1);
     setFilterType('all');
     setSelectedCategory(null);
+    setSelectedProductId(null);
+    setSelectedLocation(null);
+    setReportLanguage('zh');
     setRawData(data);
     
     try {
       // Artificial delay to show loading state if it's too fast
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 800));
       
+      setAnalysisStep(`正在進行本地分類分析 (共 ${data.length} 筆)...`);
       const analyzed = await analyzeFeedbackBatch(data);
       setAnalyzedData(analyzed);
       
-      const fullStats = await calculateStats(analyzed);
+      setAnalysisStep('正在產生 AI 深度洞察報告...');
+      const fullStats = await calculateStats(analyzed, reportLanguage);
       setStats(fullStats);
     } catch (err) {
       console.error("Analysis failed:", err);
       setErrorMessage('分析過程中發生錯誤，請稍後再試。');
     } finally {
       setIsAnalyzing(false);
+      setAnalysisStep('');
     }
   };
 
@@ -225,13 +218,23 @@ export default function App() {
       data = data.filter(f => f.isServiceRelated);
     }
 
+    // Product ID filter
+    if (selectedProductId) {
+      data = data.filter(f => f.productId === selectedProductId);
+    }
+
+    // Location filter
+    if (selectedLocation) {
+      data = data.filter(f => f.location === selectedLocation);
+    }
+
     // Category filter
     if (selectedCategory) {
       data = data.filter(f => f.mainCategory === selectedCategory || f.subCategory === selectedCategory);
     }
 
     return data;
-  }, [viewModeData, filterType, selectedCategory]);
+  }, [viewModeData, filterType, selectedCategory, selectedProductId, selectedLocation]);
 
   const displayStats = useMemo(() => {
     if (!stats || !analyzedData.length) return null;
@@ -242,6 +245,31 @@ export default function App() {
     if (!stats || !viewModeData.length) return null;
     return calculateBasicStats(viewModeData);
   }, [stats, viewModeData]);
+
+  const productIds = useMemo(() => {
+    const ids = new Set(analyzedData.map(f => f.productId).filter(Boolean));
+    return Array.from(ids).sort();
+  }, [analyzedData]);
+
+  const locations = useMemo(() => {
+    const locs = new Set(analyzedData.map(f => f.location).filter(Boolean));
+    return Array.from(locs).sort();
+  }, [analyzedData]);
+
+  const handleUpdateAISummary = async () => {
+    if (filteredData.length === 0) return;
+    setIsAnalyzing(true);
+    setAnalysisStep('正在根據篩選條件重新產生 AI 洞察...');
+    try {
+      const newStats = await calculateStats(filteredData, reportLanguage);
+      setStats(newStats);
+    } catch (err) {
+      setErrorMessage('重新生成 AI 洞察失敗。');
+    } finally {
+      setIsAnalyzing(false);
+      setAnalysisStep('');
+    }
+  };
 
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -351,7 +379,7 @@ export default function App() {
                 將數據轉化為洞察
               </h2>
               <p className="mt-4 text-lg text-slate-600">
-                上傳您的客服工單與 NPS 調查資料，讓 AI 為您分析客戶回饋、分類問題並產生總結。
+                上傳客服工單與 NPS 調查資料，讓 AI 為您分析客戶回饋、分類問題並產生總結。
               </p>
             </div>
             
@@ -362,17 +390,20 @@ export default function App() {
                 <div className="relative">
                   <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-ping"></div>
+                    <RefreshCw className="w-6 h-6 text-blue-600 animate-pulse" />
                   </div>
                 </div>
                 <div className="text-center">
-                  <p className="text-blue-700 font-bold text-lg">AI 正在深度分析您的數據中</p>
-                  <div className="flex justify-center gap-1 mt-2">
+                  <p className="text-blue-700 font-bold text-lg">AI 正在深度分析中</p>
+                  <p className="text-blue-500 text-sm font-medium mt-2 animate-pulse">{analysisStep}</p>
+                  <div className="flex justify-center gap-1 mt-4">
                     <motion.div animate={{ opacity: [0, 1, 0] }} transition={{ repeat: Infinity, duration: 1.5, delay: 0 }} className="w-1.5 h-1.5 bg-blue-400 rounded-full" />
                     <motion.div animate={{ opacity: [0, 1, 0] }} transition={{ repeat: Infinity, duration: 1.5, delay: 0.3 }} className="w-1.5 h-1.5 bg-blue-400 rounded-full" />
                     <motion.div animate={{ opacity: [0, 1, 0] }} transition={{ repeat: Infinity, duration: 1.5, delay: 0.6 }} className="w-1.5 h-1.5 bg-blue-400 rounded-full" />
                   </div>
-                  <p className="text-blue-500 text-sm mt-4">正在識別關鍵字、分類問題並產生總結報告...</p>
+                  <p className="text-slate-400 text-[10px] mt-6">
+                    提示：數據量較大時 (如 800+ 筆) 可能需要 15-30 秒，請勿關閉視窗。
+                  </p>
                 </div>
               </div>
             )}
@@ -407,6 +438,68 @@ export default function App() {
                 icon={ThumbsUp} 
                 colorClass="bg-amber-50 text-amber-600"
               />
+            </div>
+
+            {/* Filter Bar */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Product ID:</span>
+                <select 
+                  value={selectedProductId || ''} 
+                  onChange={(e) => { setSelectedProductId(e.target.value || null); setCurrentPage(1); }}
+                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
+                >
+                  <option value="">全部</option>
+                  {productIds.map(id => <option key={id} value={id}>{id}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Location:</span>
+                <select 
+                  value={selectedLocation || ''} 
+                  onChange={(e) => { setSelectedLocation(e.target.value || null); setCurrentPage(1); }}
+                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
+                >
+                  <option value="">全部</option>
+                  {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">AI Language:</span>
+                <div className="flex bg-slate-100 p-1 rounded-lg">
+                  <button
+                    onClick={() => setReportLanguage('zh')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-bold rounded transition-all",
+                      reportLanguage === 'zh' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    中文
+                  </button>
+                  <button
+                    onClick={() => setReportLanguage('en')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-bold rounded transition-all",
+                      reportLanguage === 'en' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    EN
+                  </button>
+                </div>
+              </div>
+
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={handleUpdateAISummary}
+                  disabled={isAnalyzing}
+                  className="flex items-center gap-2 px-4 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50 transition-all shadow-sm"
+                >
+                  {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  重新生成 AI 洞察
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -488,9 +581,11 @@ export default function App() {
                     <div className="flex items-center justify-between mb-6 flex-shrink-0">
                       <div className="flex items-center gap-2">
                         <LayoutDashboard className="w-5 h-5 text-blue-600" />
-                        <h3 className="font-bold text-slate-900 text-lg">季度{viewMode === 'CS' ? '客服與產品' : '產品'}洞察</h3>
+                        <h3 className="font-bold text-slate-900 text-lg">{viewMode === 'CS' ? '客服與產品' : '產品'}洞察</h3>
                       </div>
-                      <div className="text-[10px] text-blue-500 font-bold bg-blue-50 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">點擊展開詳情</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-[10px] text-blue-500 font-bold bg-blue-50 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">點擊展開詳情</div>
+                      </div>
                     </div>
                     <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                       <div className="prose prose-slate max-w-none">
@@ -590,9 +685,11 @@ export default function App() {
                     <tr>
                       <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-32">工單 ID</th>
                       <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-24">CSAT/NPS</th>
+                      <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-32">Product / Loc</th>
                       <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-40">分類</th>
                       <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100">用戶回饋內容</th>
                       <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-24">相關性</th>
+                      <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 w-16"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -618,6 +715,12 @@ export default function App() {
                               "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold",
                               f.npsScore >= 9 ? "bg-indigo-100 text-indigo-800" : f.npsScore <= 6 ? "bg-orange-100 text-orange-800" : "bg-slate-100 text-slate-800"
                             )}>NPS: {f.npsScore}</span>
+                          </div>
+                        </td>
+                        <td className="p-4 align-top">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs font-bold text-slate-700">{f.productId || '-'}</span>
+                            <span className="text-[10px] text-slate-400">{f.location || '-'}</span>
                           </div>
                         </td>
                         <td className="p-4 align-top">
@@ -813,23 +916,6 @@ export default function App() {
                     <p className="text-sm text-emerald-800 font-medium">報告已成功儲存！</p>
                   </div>
                   <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-500 uppercase">下載報告</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button 
-                        onClick={() => downloadReport('full')}
-                        className="flex items-center justify-center gap-2 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all"
-                      >
-                        <Download className="w-4 h-4" /> 下載完整報告
-                      </button>
-                      <button 
-                        onClick={() => downloadReport('pm')}
-                        className="flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all"
-                      >
-                        <Download className="w-4 h-4" /> 下載 PM 報告
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
                     <label className="block text-xs font-bold text-slate-500 uppercase">分享連結</label>
                     <div className="flex gap-2">
                       <input 
@@ -873,7 +959,7 @@ export default function App() {
                 <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-200">
                   <LayoutDashboard className="w-6 h-6 text-white" />
                 </div>
-                <h2 className="text-2xl font-bold text-slate-900">季度{viewMode === 'CS' ? '客服與產品' : '產品'}洞察詳情</h2>
+                <h2 className="text-2xl font-bold text-slate-900">{viewMode === 'CS' ? '客服與產品' : '產品'}洞察詳情</h2>
               </div>
               <button 
                 onClick={() => setIsInsightExpanded(false)}

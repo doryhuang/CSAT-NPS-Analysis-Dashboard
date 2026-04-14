@@ -20,15 +20,17 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzin
         skipEmptyLines: true,
         complete: (results) => {
           const rawData: RawFeedback[] = results.data.map((row: any) => ({
-            ticketId: row['工單 ID'] || row['工單ID'] || row['Ticket ID'] || '',
-            csatScore: parseInt(row['CSAT score'] || row['CSAT Score'] || '0'),
-            npsScore: parseInt(row['NPS Score'] || row['NPS score'] || '0'),
-            ticketComment: row['工單滿意度評論'] || row['Ticket Satisfaction Comment'] || '',
-            npsComment: row['NPS comment'] || row['NPS Comment'] || '',
-            howToImprove: row['NPC How to improve'] || row['How to improve'] || '',
-            friendliness: parseInt(row['Friendliness'] || '0'),
-            helpfulness: parseInt(row['Helpfulness'] || '0'),
-            promptness: parseInt(row['Promptness'] || '0'),
+            ticketId: row['工單 ID'] || row['工單ID'] || row['Ticket ID'] || row['id'] || row['ID'] || '',
+            csatScore: parseInt(row['CSAT score'] || row['CSAT Score'] || row['CSAT'] || '0'),
+            npsScore: parseInt(row['NPS Score'] || row['NPS score'] || row['NPS'] || '0'),
+            ticketComment: row['工單滿意度評論'] || row['Ticket Satisfaction Comment'] || row['Comment'] || row['comment'] || '',
+            npsComment: row['NPS comment'] || row['NPS Comment'] || row['NPS Feedback'] || '',
+            howToImprove: row['NPC How to improve'] || row['How to improve'] || row['Improvement'] || '',
+            friendliness: parseInt(row['Friendliness'] || row['親切度'] || '0'),
+            helpfulness: parseInt(row['Helpfulness'] || row['專業度'] || '0'),
+            promptness: parseInt(row['Promptness'] || row['速度'] || '0'),
+            productId: row['Product ID'] || row['ProductID'] || row['產品ID'] || row['產品'] || '',
+            location: row['Location'] || row['location'] || row['地區'] || row['國家'] || '',
           }));
           onDataLoaded(rawData);
           resolve();
@@ -79,9 +81,14 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzin
       }
 
       const csvText = await response.text();
-      // Check if it's actually HTML (login page)
-      if (csvText.includes('<!DOCTYPE html>') || csvText.includes('<html')) {
-        throw new Error('讀取到 HTML 而非 CSV。請確認試算表已開啟「知道連結的人均可查看」權限。');
+      
+      // Check if it's actually HTML (login page or error page)
+      if (csvText.includes('<!DOCTYPE html>') || csvText.includes('<html') || csvText.includes('google-signin')) {
+        throw new Error('讀取失敗：該試算表可能未開啟「知道連結的人均可查看」權限，或網址格式不正確。');
+      }
+
+      if (csvText.length < 10) {
+        throw new Error('讀取失敗：試算表內容似乎是空的。');
       }
       
       await parseCSVData(csvText);
