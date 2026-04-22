@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import Papa from 'papaparse';
-import { Upload, FileType, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { Upload, FileType, Link as LinkIcon, RefreshCw, MessageSquareText } from 'lucide-react';
 import { RawFeedback } from '../types';
 
 interface FileUploadProps {
@@ -11,6 +11,7 @@ interface FileUploadProps {
 export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzing }) => {
   const [sheetUrl, setSheetUrl] = useState('');
   const [isFetching, setIsFetching] = useState(false);
+  const [isFetchingZendesk, setIsFetchingZendesk] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const parseCSVData = (csvString: string): Promise<void> => {
@@ -99,34 +100,98 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzin
     }
   };
 
+  const handleFetchZendesk = async () => {
+    setIsFetchingZendesk(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/zendesk/tickets');
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || '無法連線至 Zendesk，請檢查環境變數設定。');
+      }
+      const data = await response.json();
+      
+      // Map Zendesk tickets to RawFeedback format
+      const rawData: RawFeedback[] = data.tickets.map((t: any) => ({
+        ticketId: t.id.toString(),
+        csatScore: t.satisfaction_rating?.score === 'good' ? 5 : (t.satisfaction_rating?.score === 'bad' ? 1 : 0),
+        npsScore: 0, // Zendesk core doesn't have NPS by default
+        ticketComment: t.subject + '\n' + t.description,
+        npsComment: '',
+        howToImprove: '',
+        friendliness: 0,
+        helpfulness: 0,
+        promptness: 0,
+        productId: t.fields?.find((f: any) => f.id === 12345678)?.value || '', // Placeholder for custom field
+        location: t.fields?.find((f: any) => f.id === 87654321)?.value || '', // Placeholder for custom field
+      }));
+      
+      onDataLoaded(rawData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Zendesk 讀取失敗');
+    } finally {
+      setIsFetchingZendesk(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-2 mb-4">
-          <LinkIcon className="w-4 h-4 text-blue-600" />
-          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">讀取 Google Sheet</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Google Sheet Section */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+          <div className="flex items-center gap-2 mb-4">
+            <LinkIcon className="w-4 h-4 text-blue-600" />
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">讀取 Google Sheet</h3>
+          </div>
+          <div className="flex gap-2 mb-auto">
+            <input
+              type="text"
+              placeholder="貼上 Google Sheet 網址"
+              value={sheetUrl}
+              onChange={(e) => setSheetUrl(e.target.value)}
+              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+            <button
+              onClick={handleFetchGoogleSheet}
+              disabled={!sheetUrl || isFetching || isAnalyzing}
+              className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+            >
+              {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : '讀取'}
+            </button>
+          </div>
+          <p className="mt-3 text-[10px] text-slate-400 leading-relaxed">
+            提示：需開啟「知道連結的人均可查看」權限。
+          </p>
         </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="貼上 Google Sheet 網址 (需開啟共用權限)"
-            value={sheetUrl}
-            onChange={(e) => setSheetUrl(e.target.value)}
-            className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-          />
-          <button
-            onClick={handleFetchGoogleSheet}
-            disabled={!sheetUrl || isFetching || isAnalyzing}
-            className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
-          >
-            {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : '讀取資料'}
-          </button>
+
+        {/* Zendesk Section */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+          <div className="flex items-center gap-2 mb-4">
+            <MessageSquareText className="w-4 h-4 text-emerald-600" />
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">整合 Zendesk API</h3>
+          </div>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={handleFetchZendesk}
+              disabled={isFetchingZendesk || isAnalyzing}
+              className="w-full py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+            >
+              {isFetchingZendesk ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              同步最新 Zendesk 工單
+            </button>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              將自動從您的 Zendesk 帳戶抓取最近的工單進行分析。
+            </p>
+          </div>
         </div>
-        {error && <p className="mt-2 text-xs text-red-500 font-medium">{error}</p>}
-        <p className="mt-3 text-[10px] text-slate-400 leading-relaxed">
-          提示：請確認試算表已開啟「知道連結的人均可查看」權限。若有分頁，請切換至該分頁後複製網址。
-        </p>
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-xs text-red-600 font-medium flex items-center gap-2">
+          <span className="w-1.5 h-1.5 bg-red-600 rounded-full"></span>
+          {error}
+        </div>
+      )}
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center">

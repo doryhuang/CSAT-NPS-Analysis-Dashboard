@@ -21,16 +21,28 @@ import {
   Trash2,
   X,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  Clock,
+  MessageSquareText,
+  Box,
+  Globe,
+  Languages
 } from 'lucide-react';
 import { RawFeedback, AnalyzedFeedback, DashboardStats, CATEGORY_PATTERNS } from './types';
 import { FileUpload } from './components/FileUpload';
 import { CategoryChart } from './components/CategoryChart';
-import { analyzeFeedbackBatch, calculateStats, calculateBasicStats } from './services/analysisService';
+import { 
+  analyzeFeedbackBatch, 
+  calculateStats, 
+  calculateBasicStats,
+  analyzeChatTimeout
+} from './services/analysisService';
 import { saveReport, getReport } from './services/reportService';
 import { cn } from './lib/utils';
 import { db } from './firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type ViewMode = 'CS' | 'PM';
 
@@ -51,7 +63,7 @@ export default function App() {
   const [filterType, setFilterType] = useState<'all' | 'product' | 'service'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
+  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [reportLanguage, setReportLanguage] = useState<'zh' | 'en'>('zh');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -68,6 +80,8 @@ export default function App() {
   const [isReportsExpanded, setIsReportsExpanded] = useState(false);
   const [reportToDelete, setReportToDelete] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [timeoutAnalysis, setTimeoutAnalysis] = useState<{id: string, content: string} | null>(null);
+  const [isAnalyzingTimeout, setIsAnalyzingTimeout] = useState(false);
 
   // Load saved reports from Firebase
   useEffect(() => {
@@ -99,6 +113,18 @@ export default function App() {
     }
   };
 
+  const handleAnalyzeTimeout = async (feedback: AnalyzedFeedback) => {
+    setIsAnalyzingTimeout(true);
+    try {
+      const content = `${feedback.ticketComment} ${feedback.npsComment} ${feedback.howToImprove}`;
+      const result = await analyzeChatTimeout(content);
+      setTimeoutAnalysis({ id: feedback.ticketId, content: result });
+    } catch (err) {
+      setErrorMessage('超時分析失敗。');
+    } finally {
+      setIsAnalyzingTimeout(false);
+    }
+  };
   const handleUpdateFeedback = (updated: AnalyzedFeedback) => {
     const newData = analyzedData.map(f => f.ticketId === updated.ticketId ? updated : f);
     setAnalyzedData(newData);
@@ -176,7 +202,7 @@ export default function App() {
     setFilterType('all');
     setSelectedCategory(null);
     setSelectedProductId(null);
-    setSelectedLocation(null);
+    setSelectedLocations([]);
     setReportLanguage('zh');
     setRawData(data);
     
@@ -224,8 +250,8 @@ export default function App() {
     }
 
     // Location filter
-    if (selectedLocation) {
-      data = data.filter(f => f.location === selectedLocation);
+    if (selectedLocations.length > 0) {
+      data = data.filter(f => selectedLocations.includes(f.location));
     }
 
     // Category filter
@@ -234,7 +260,7 @@ export default function App() {
     }
 
     return data;
-  }, [viewModeData, filterType, selectedCategory, selectedProductId, selectedLocation]);
+  }, [viewModeData, filterType, selectedCategory, selectedProductId, selectedLocations]);
 
   const displayStats = useMemo(() => {
     if (!stats || !analyzedData.length) return null;
@@ -441,62 +467,106 @@ export default function App() {
             </div>
 
             {/* Filter Bar */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-6" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Product ID:</span>
-                <select 
-                  value={selectedProductId || ''} 
-                  onChange={(e) => { setSelectedProductId(e.target.value || null); setCurrentPage(1); }}
-                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
-                >
-                  <option value="">全部</option>
-                  {productIds.map(id => <option key={id} value={id}>{id}</option>)}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Location:</span>
-                <select 
-                  value={selectedLocation || ''} 
-                  onChange={(e) => { setSelectedLocation(e.target.value || null); setCurrentPage(1); }}
-                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
-                >
-                  <option value="">全部</option>
-                  {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">AI Language:</span>
-                <div className="flex bg-slate-100 p-1 rounded-lg">
-                  <button
-                    onClick={() => setReportLanguage('zh')}
-                    className={cn(
-                      "px-3 py-1 text-[10px] font-bold rounded transition-all",
-                      reportLanguage === 'zh' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    )}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-lg shadow-slate-100 flex flex-wrap items-center gap-y-6 gap-x-8" onClick={(e) => e.stopPropagation()}>
+              {/* Product ID Section */}
+              <div className="flex items-center gap-3 pr-6 border-r border-slate-100">
+                <div className="p-2 bg-slate-50 rounded-lg">
+                  <Box className="w-4 h-4 text-slate-500" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Product ID</span>
+                  <select 
+                    value={selectedProductId || ''} 
+                    onChange={(e) => { setSelectedProductId(e.target.value || null); setCurrentPage(1); }}
+                    className="text-sm font-bold text-slate-700 focus:outline-none bg-transparent cursor-pointer hover:text-blue-600 transition-colors"
                   >
-                    中文
-                  </button>
-                  <button
-                    onClick={() => setReportLanguage('en')}
-                    className={cn(
-                      "px-3 py-1 text-[10px] font-bold rounded transition-all",
-                      reportLanguage === 'en' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    )}
-                  >
-                    EN
-                  </button>
+                    <option value="">全部產品</option>
+                    {productIds.map(id => <option key={id} value={id}>{id}</option>)}
+                  </select>
                 </div>
               </div>
 
-              <div className="ml-auto flex items-center gap-2">
+              {/* Location Section */}
+              <div className="flex-1 flex items-center gap-4 min-w-[300px]">
+                <div className="p-2 bg-slate-50 rounded-lg shrink-0">
+                  <Globe className="w-4 h-4 text-slate-500" />
+                </div>
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">地區篩選 (可複選)</span>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto scrollbar-hide">
+                    <button
+                      onClick={() => { setSelectedLocations([]); setCurrentPage(1); }}
+                      className={cn(
+                        "px-3 py-1 text-xs font-bold rounded-full border transition-all",
+                        selectedLocations.length === 0 
+                          ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-100" 
+                          : "bg-white text-slate-500 border-slate-200 hover:border-blue-400 hover:text-blue-500"
+                      )}
+                    >
+                      全部
+                    </button>
+                    {locations.map(loc => (
+                      <button
+                        key={loc}
+                        onClick={() => {
+                          const next = selectedLocations.includes(loc)
+                            ? selectedLocations.filter(l => l !== loc)
+                            : [...selectedLocations, loc];
+                          setSelectedLocations(next);
+                          setCurrentPage(1);
+                        }}
+                        className={cn(
+                          "px-3 py-1 text-xs font-bold rounded-full border transition-all",
+                          selectedLocations.includes(loc)
+                            ? "bg-blue-50 text-blue-600 border-blue-200 ring-2 ring-blue-50"
+                            : "bg-white text-slate-500 border-slate-200 hover:border-blue-400 hover:text-blue-500"
+                        )}
+                      >
+                        {loc}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Language Section */}
+              <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
+                <div className="p-2 bg-slate-50 rounded-lg">
+                  <Languages className="w-4 h-4 text-slate-500" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">AI 輸出語言</span>
+                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                    <button
+                      onClick={() => setReportLanguage('zh')}
+                      className={cn(
+                        "px-3 py-1 text-[11px] font-bold rounded-md transition-all",
+                        reportLanguage === 'zh' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      )}
+                    >
+                      中文
+                    </button>
+                    <button
+                      onClick={() => setReportLanguage('en')}
+                      className={cn(
+                        "px-3 py-1 text-[11px] font-bold rounded-md transition-all",
+                        reportLanguage === 'en' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      )}
+                    >
+                      EN
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Section */}
+              <div className="pl-4 flex items-center shrink-0">
                 <button
                   onClick={handleUpdateAISummary}
                   disabled={isAnalyzing}
-                  className="flex items-center gap-2 px-4 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 disabled:opacity-50 transition-all shadow-sm"
+                  className="group flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 disabled:opacity-50 transition-all shadow-xl shadow-slate-200 active:scale-95"
                 >
-                  {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  <RefreshCw className={cn("w-4 h-4 transition-transform group-hover:rotate-180 duration-500", isAnalyzing && "animate-spin")} />
                   重新生成 AI 洞察
                 </button>
               </div>
@@ -589,8 +659,10 @@ export default function App() {
                     </div>
                     <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                       <div className="prose prose-slate max-w-none">
-                        <div className="text-slate-700 leading-relaxed whitespace-pre-wrap font-sans text-lg">
-                          {viewMode === 'CS' ? stats?.aiSummaryCS : stats?.aiSummaryPM || "正在生成 AI 洞察..."}
+                        <div className="text-slate-700 leading-relaxed font-sans text-lg markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {viewMode === 'CS' ? stats?.aiSummaryCS : stats?.aiSummaryPM || "正在生成 AI 洞察..."}
+                          </ReactMarkdown>
                         </div>
                       </div>
                     </div>
@@ -758,13 +830,22 @@ export default function App() {
                           </div>
                         </td>
                         <td className="px-4 py-4 text-sm text-slate-400">
-                          <button 
-                            onClick={() => setEditingFeedback(f)}
-                            className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-blue-600 hover:text-blue-700"
-                            title="手動修正 AI 分類"
-                          >
-                            <Edit3 size={16} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={() => setEditingFeedback(f)}
+                              className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-blue-600 hover:text-blue-700"
+                              title="手動修正 AI 分類"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleAnalyzeTimeout(f)}
+                              className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-emerald-600 hover:text-emerald-700"
+                              title="Chat 超時分析"
+                            >
+                              <Clock size={16} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -836,6 +917,58 @@ export default function App() {
             )}
           </div>
       </main>
+
+      {/* Timeout Analysis Modal */}
+      {timeoutAnalysis && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="bg-emerald-100 p-2 rounded-xl">
+                  <Clock className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">Chat 超時分析報告</h3>
+                  <p className="text-xs text-slate-500">工單 ID: {timeoutAnalysis.id}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setTimeoutAnalysis(null)}
+                className="p-2 hover:bg-slate-200 rounded-full transition-all"
+              >
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+            <div className="p-8 overflow-y-auto custom-scrollbar">
+              <div className="prose prose-slate max-w-none markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{timeoutAnalysis.content}</ReactMarkdown>
+              </div>
+            </div>
+            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+              <button
+                onClick={() => setTimeoutAnalysis(null)}
+                className="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all"
+              >
+                關閉
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Global Loading for Timeout Analysis */}
+      {isAnalyzingTimeout && (
+        <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[110] flex items-center justify-center">
+          <div className="bg-white p-6 rounded-2xl shadow-xl flex items-center gap-4">
+            <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+            <p className="text-sm font-bold text-slate-700">正在分析超時原因...</p>
+          </div>
+        </div>
+      )}
 
       {/* Save & Share Modal */}
       {showSaveModal && (

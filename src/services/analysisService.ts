@@ -206,51 +206,46 @@ export async function generateAISummary(analyzedData: AnalyzedFeedback[], viewMo
   }
   
   const feedbackText = targetFeedback
-    .map(f => {
-      if (isCS) {
-        return `[ID: ${f.ticketId}] [${f.isProductRelated ? (isZh ? '產品' : 'Product') : (isZh ? '客服' : 'Service')}] [Score: ${f.csatScore}/${f.npsScore}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
-      } else {
-        return `[Issue: ${f.subCategory}] [Score: ${f.csatScore}/${f.npsScore}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`;
-      }
-    })
-    .slice(0, 40)
+    .map(f => `[Case ID: ${f.ticketId}] [${f.isProductRelated ? '產品' : '客服'}] ${f.ticketComment} ${f.npsComment} ${f.howToImprove}`)
+    .slice(0, 50)
     .join("\n");
 
   const prompt = isCS ? `
-    You are a professional Customer Service Manager. Please provide a concise and professional analysis of the following user feedback (which may be in Chinese, English, or Japanese).
-    
-    Analysis Focus: Service quality, response speed, attitude, and the impact of product issues on customer service.
-    
-    Output Language: ${isZh ? 'Traditional Chinese (zh-TW)' : 'English (en)'}
-    
-    Format Requirements (Strictly follow):
-    - Use Markdown format.
-    - **Deep Analysis Report**: Divide into 2-3 small paragraphs, each with a sub-heading. Use **bold** to highlight key pain points.
-    - **Meeting Summary**: Provide 3 concise bullet points.
-    
-    User Feedback:
+    你是一位客服與客戶體驗分析師。
+    任務：將所有終端使用者的描述以及已採取的關鍵行動（如有）整理成三個精簡的重點條列。
+    要求：
+    1. 擷取並強調關鍵問題、情緒與緊急程度。
+    2. 依優先順序（由最緊急／最重要開始）提供三個關鍵結論。
+    3. 在結論中需包含數據分析（例如：本次分析中有 70% 的工單屬於此類）。
+    4. 最後，從客服角度提出一項可改善的機會建議。
+    5. 在摘要後標註案件編號（case ID）。
+    6. 格式如下：
+       ## 工單摘要
+       (重點條列)
+       
+       ## 結論（百分比）
+       (結論內容)
+       
+       ## 洞察與三個範例情境
+       (洞察內容)
+       
+       ## 改善建議
+       (建議內容)
+       
+    請確保所有工單的百分比總和為 100%。產出結果必須為繁體中文。
+
+    待分析工單：
     ${feedbackText}
-    
-    Please output the formatted summary text directly.
   ` : `
-    You are a professional Product Manager. Please provide a professional analysis of the following user feedback (which may be in Chinese, English, or Japanese).
+    You are a professional Product Manager. Please provide a professional analysis focused on product logic and stability.
     
-    **Important Instructions:**
-    1. **Focus only on product content**: Analysis should be entirely on product functional defects, stability, user pain points, improvement directions, hardware issues, or App UI.
-    2. **Exclude service content**: Completely ignore any descriptions regarding customer service attitude, response speed, ticket handling processes, etc.
-    3. **Strictly no ticket IDs**: Do not mention any ticket IDs in the summary.
-    
-    Output Language: ${isZh ? 'Traditional Chinese (zh-TW)' : 'English (en)'}
-    
-    Format Requirements (Strictly follow):
-    - Use Markdown format.
-    - **Deep Analysis Report**: Analyze based on three sub-headings: "Current Issues", "Impact Assessment", and "Recommended Actions". Use **bold** to highlight key issues.
-    - **Meeting Summary**: Provide 3-5 concise, powerful bullet points that can be reported directly in a meeting.
+    Analysis Focus: Product functional defects, stability, user pain points, improvement directions, hardware issues, or App UI.
+    Exclude: customer service attitude or response speed.
+    Format: Use Markdown, include "Deep Analysis Report" and "Meeting Summary".
+    Language: Traditional Chinese.
     
     User Feedback:
     ${feedbackText}
-    
-    Please output the formatted summary text directly.
   `;
 
   try {
@@ -334,4 +329,44 @@ export async function calculateStats(analyzedData: AnalyzedFeedback[], language:
     aiSummaryCS,
     aiSummaryPM
   };
+}
+
+export async function analyzeChatTimeout(ticketContent: string): Promise<string> {
+  const prompt = `
+    你是一位資深客服分析師。
+    任務：將終端使用者的描述整理成五個精簡的重點條列，並分析 Chat 超時原因。
+    要求：
+    1. 擷取並強調關鍵問題、情緒與緊急程度。
+    2. 依優先順序（由最緊急／最重要開始）提供三個關鍵結論。
+    3. 在結論中需包含數據分析（例如：本次分析中有 70% 的內容與此核心問題相關）。
+    4. 最後，從客服角度提出一項可改善的機會建議。
+    5. 格式如下：
+       ## 重點整理
+       (五個條列)
+       
+       ## 結論（百分比）
+       (結論內容)
+       
+       ## 洞察
+       (洞察內容)
+       
+       ## 改善建議
+       (建議內容)
+       
+    請確保百分比總和為 100%。產出結果必須為繁體中文。
+
+    待分析內容：
+    ${ticketContent}
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+    return response.text || "無法產生超時分析。";
+  } catch (error) {
+    console.error("Chat Timeout Analysis Error:", error);
+    return "超時分析產生失敗。";
+  }
 }

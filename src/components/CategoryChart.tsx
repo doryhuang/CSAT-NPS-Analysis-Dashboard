@@ -51,7 +51,7 @@ export const CategoryChart: React.FC<ChartProps> = ({ data, title, type = 'bar',
               data={chartData} 
               layout="vertical" 
               margin={{ left: 40, right: 40 }}
-              onClick={(e) => e && e.activeLabel && onItemClick && onItemClick(e.activeLabel)}
+              onClick={(e) => e && e.activeLabel && onItemClick && onItemClick(String(e.activeLabel))}
             >
               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
               <XAxis type="number" hide />
