@@ -11,7 +11,6 @@ interface FileUploadProps {
 export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzing }) => {
   const [sheetUrl, setSheetUrl] = useState('');
   const [isFetching, setIsFetching] = useState(false);
-  const [isFetchingZendesk, setIsFetchingZendesk] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const parseCSVData = (csvString: string): Promise<void> => {
@@ -100,90 +99,33 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isAnalyzin
     }
   };
 
-  const handleFetchZendesk = async () => {
-    setIsFetchingZendesk(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/zendesk/tickets');
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || '無法連線至 Zendesk，請檢查環境變數設定。');
-      }
-      const data = await response.json();
-      
-      // Map Zendesk tickets to RawFeedback format
-      const rawData: RawFeedback[] = data.tickets.map((t: any) => ({
-        ticketId: t.id.toString(),
-        csatScore: t.satisfaction_rating?.score === 'good' ? 5 : (t.satisfaction_rating?.score === 'bad' ? 1 : 0),
-        npsScore: 0, // Zendesk core doesn't have NPS by default
-        ticketComment: t.subject + '\n' + t.description,
-        npsComment: '',
-        howToImprove: '',
-        friendliness: 0,
-        helpfulness: 0,
-        promptness: 0,
-        productId: t.fields?.find((f: any) => f.id === 12345678)?.value || '', // Placeholder for custom field
-        location: t.fields?.find((f: any) => f.id === 87654321)?.value || '', // Placeholder for custom field
-      }));
-      
-      onDataLoaded(rawData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Zendesk 讀取失敗');
-    } finally {
-      setIsFetchingZendesk(false);
-    }
-  };
-
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Google Sheet Section */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <div className="flex items-center gap-2 mb-4">
-            <LinkIcon className="w-4 h-4 text-blue-600" />
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">讀取 Google Sheet</h3>
-          </div>
-          <div className="flex gap-2 mb-auto">
-            <input
-              type="text"
-              placeholder="貼上 Google Sheet 網址"
-              value={sheetUrl}
-              onChange={(e) => setSheetUrl(e.target.value)}
-              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-            />
-            <button
-              onClick={handleFetchGoogleSheet}
-              disabled={!sheetUrl || isFetching || isAnalyzing}
-              className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
-            >
-              {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : '讀取'}
-            </button>
-          </div>
-          <p className="mt-3 text-[10px] text-slate-400 leading-relaxed">
-            提示：需開啟「知道連結的人均可查看」權限。
-          </p>
+    <div className="space-y-8">
+      {/* Google Sheet Section */}
+      <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col max-w-2xl mx-auto w-full">
+        <div className="flex items-center gap-2 mb-4">
+          <LinkIcon className="w-4 h-4 text-blue-600" />
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">讀取 Google Sheet</h3>
         </div>
-
-        {/* Zendesk Section */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <div className="flex items-center gap-2 mb-4">
-            <MessageSquareText className="w-4 h-4 text-emerald-600" />
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">整合 Zendesk API</h3>
-          </div>
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={handleFetchZendesk}
-              disabled={isFetchingZendesk || isAnalyzing}
-              className="w-full py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-            >
-              {isFetchingZendesk ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              同步最新 Zendesk 工單
-            </button>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              將自動從您的 Zendesk 帳戶抓取最近的工單進行分析。
-            </p>
-          </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="貼上 Google Sheet 網址"
+            value={sheetUrl}
+            onChange={(e) => setSheetUrl(e.target.value)}
+            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          />
+          <button
+            onClick={handleFetchGoogleSheet}
+            disabled={!sheetUrl || isFetching || isAnalyzing}
+            className="px-8 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+          >
+            {isFetching ? <RefreshCw className="w-4 h-4 animate-spin" /> : '讀取數據'}
+          </button>
         </div>
+        <p className="mt-4 text-xs text-slate-400 text-center">
+          提示：需開啟「知道連結的人均可查看」權限。直接讀取雲端試算表可保持數據同步。
+        </p>
       </div>
 
       {error && (

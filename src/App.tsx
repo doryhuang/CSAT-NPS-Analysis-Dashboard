@@ -173,9 +173,8 @@ export default function App() {
         : analyzedData;
         
       // Optimization: Only save necessary fields to avoid the 1MB Firestore limit
-      const optimizedData = dataToSave.map(f => ({
+      const optimizedData: AnalyzedFeedback[] = dataToSave.map(f => ({
         ticketId: f.ticketId,
-        source: f.source,
         location: f.location,
         productId: f.productId,
         mainCategory: f.mainCategory,
@@ -183,13 +182,14 @@ export default function App() {
         sentiment: f.sentiment,
         csatScore: f.csatScore,
         npsScore: f.npsScore,
-        createdAt: f.createdAt,
-        // Keep comments but potentially truncate or only keep analyzed if they are too long
         ticketComment: f.ticketComment,
         npsComment: f.npsComment,
         howToImprove: f.howToImprove,
         isProductRelated: f.isProductRelated,
-        isServiceRelated: f.isServiceRelated
+        isServiceRelated: f.isServiceRelated,
+        friendliness: f.friendliness || 0,
+        helpfulness: f.helpfulness || 0,
+        promptness: f.promptness || 0
       }));
 
       const id = await saveReport(optimizedData, stats, reportTitle, reportTypeToSave);
@@ -202,7 +202,15 @@ export default function App() {
       if (err?.code === 'permission-denied') {
         errorMsg = '儲存失敗：權限不足或 Firebase 額度已達上限。';
       } else if (err?.message?.includes('too large') || err?.code === 'invalid-argument') {
-        errorMsg = '儲存失敗：資料量過大 (超過 1MB 限制)，請嘗試在儲存時選擇「PM 模式」以減少數據量。';
+        // Even with compression it failed? We can try one last time with NO data (insight only)
+        try {
+          const fallbackId = await saveReport(undefined, stats, reportTitle, 'insight_only');
+          const url = `${window.location.origin}${window.location.pathname}?report=${fallbackId}`;
+          setShareUrl(url);
+          errorMsg = '注意：由於工單數量極大，已自動改為「精簡版」分享 (僅含 AI 總結與圖表，不含原始工單內容)。';
+        } catch (innerErr) {
+          errorMsg = '儲存失敗：資料量嚴重超限，且自動降級儲存也失敗。';
+        }
       } else if (err?.message) {
         errorMsg = `儲存失敗：${err.message}`;
       }
