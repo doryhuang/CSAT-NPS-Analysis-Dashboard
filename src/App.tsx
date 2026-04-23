@@ -172,11 +172,42 @@ export default function App() {
         ? analyzedData.filter(f => f.isProductRelated) 
         : analyzedData;
         
-      const id = await saveReport(dataToSave, stats, reportTitle, reportTypeToSave);
+      // Optimization: Only save necessary fields to avoid the 1MB Firestore limit
+      const optimizedData = dataToSave.map(f => ({
+        ticketId: f.ticketId,
+        source: f.source,
+        location: f.location,
+        productId: f.productId,
+        mainCategory: f.mainCategory,
+        subCategory: f.subCategory,
+        sentiment: f.sentiment,
+        csatScore: f.csatScore,
+        npsScore: f.npsScore,
+        createdAt: f.createdAt,
+        // Keep comments but potentially truncate or only keep analyzed if they are too long
+        ticketComment: f.ticketComment,
+        npsComment: f.npsComment,
+        howToImprove: f.howToImprove,
+        isProductRelated: f.isProductRelated,
+        isServiceRelated: f.isServiceRelated
+      }));
+
+      const id = await saveReport(optimizedData, stats, reportTitle, reportTypeToSave);
       const url = `${window.location.origin}${window.location.pathname}?report=${id}`;
       setShareUrl(url);
-    } catch (err) {
-      setErrorMessage('儲存報告失敗，請稍後再試。');
+    } catch (err: any) {
+      console.error("Save report error:", err);
+      let errorMsg = '儲存報告失敗，請稍後再試。';
+      
+      if (err?.code === 'permission-denied') {
+        errorMsg = '儲存失敗：權限不足或 Firebase 額度已達上限。';
+      } else if (err?.message?.includes('too large') || err?.code === 'invalid-argument') {
+        errorMsg = '儲存失敗：資料量過大 (超過 1MB 限制)，請嘗試在儲存時選擇「PM 模式」以減少數據量。';
+      } else if (err?.message) {
+        errorMsg = `儲存失敗：${err.message}`;
+      }
+      
+      setErrorMessage(errorMsg);
     } finally {
       setIsSaving(false);
     }
