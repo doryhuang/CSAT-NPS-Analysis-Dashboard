@@ -164,8 +164,14 @@ export default function App() {
   }, []);
 
   const handleSaveReport = async () => {
-    if (!analyzedData.length || !stats || !reportTitle) return;
+    if (!analyzedData.length || !stats) return;
+    
+    // Auto-generate title if not provided
+    const finalTitle = reportTitle || `Insight Report - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    
     setIsSaving(true);
+    setShowSaveModal(true); // Open modal to show progress and result
+    
     try {
       // If it's PM Only, we filter the data to save space and keep it focused
       const dataToSave = reportTypeToSave === 'pm' 
@@ -192,9 +198,14 @@ export default function App() {
         promptness: f.promptness || 0
       }));
 
-      const id = await saveReport(optimizedData, stats, reportTitle, reportTypeToSave);
+      const id = await saveReport(optimizedData, stats, finalTitle, reportTypeToSave);
       const url = `${window.location.origin}${window.location.pathname}?report=${id}`;
       setShareUrl(url);
+      
+      // Auto copy to clipboard
+      navigator.clipboard.writeText(url);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
     } catch (err: any) {
       console.error("Save report error:", err);
       let errorMsg = '儲存報告失敗，請稍後再試。';
@@ -408,10 +419,12 @@ export default function App() {
               </div>
               
               <button
-                onClick={(e) => { e.stopPropagation(); setShowSaveModal(true); setShareUrl(null); }}
-                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all shadow-sm"
+                onClick={(e) => { e.stopPropagation(); setShareUrl(null); handleSaveReport(); }}
+                disabled={isSaving}
+                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50"
               >
-                <Share2 className="w-4 h-4" /> 分享報告
+                {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                分享報告
               </button>
 
               <button 
@@ -1031,82 +1044,55 @@ export default function App() {
             </div>
             
             <div className="p-6 space-y-4">
-              {!shareUrl ? (
-                <>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">報告名稱 (例如：2024 Q1 分析)</label>
-                    <input 
-                      type="text"
-                      placeholder="輸入報告名稱..."
-                      value={reportTitle}
-                      onChange={(e) => setReportTitle(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">報告類型</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button 
-                        onClick={() => setReportTypeToSave('full')}
-                        className={cn(
-                          "py-2 rounded-xl text-xs font-bold border transition-all",
-                          reportTypeToSave === 'full' 
-                            ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" 
-                            : "bg-white border-slate-100 text-slate-400 hover:bg-slate-50"
-                        )}
-                      >
-                        完整報告 (CS+PM)
-                      </button>
-                      <button 
-                        onClick={() => setReportTypeToSave('pm')}
-                        className={cn(
-                          "py-2 rounded-xl text-xs font-bold border transition-all",
-                          reportTypeToSave === 'pm' 
-                            ? "bg-blue-50 border-blue-200 text-blue-600 shadow-sm" 
-                            : "bg-white border-slate-100 text-slate-400 hover:bg-slate-50"
-                        )}
-                      >
-                        PM 視角報告
-                      </button>
+              {isSaving && !shareUrl && (
+                <div className="text-center py-12 flex flex-col items-center gap-4">
+                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <p className="font-bold text-slate-700">正在生成分享連結...</p>
+                  <p className="text-xs text-slate-400 font-medium animate-pulse text-blue-500">正在壓縮引擎與上傳數據</p>
+                </div>
+              )}
+
+              {shareUrl && (
+                <div className="space-y-5 pt-2">
+                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3">
+                    <div className="bg-emerald-500 p-1.5 rounded-full">
+                      <Check className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-emerald-800 font-bold">分享連結已自動複製！</p>
                     </div>
                   </div>
-
-                  <button 
-                    onClick={handleSaveReport}
-                    disabled={!reportTitle || isSaving}
-                    className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-                  >
-                    {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    {isSaving ? '正在儲存...' : '產生分享連結'}
-                  </button>
-                </>
-              ) : (
-                <div className="space-y-4">
-                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3">
-                    <Check className="w-5 h-5 text-emerald-600" />
-                    <p className="text-sm text-emerald-800 font-medium">報告已成功儲存！</p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-500 uppercase">分享連結</label>
-                    <div className="flex gap-2">
+                  
+                  <div className="space-y-3">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">連結位址</label>
+                    <div className="flex gap-2 p-1 bg-slate-50 border border-slate-200 rounded-xl">
                       <input 
                         type="text"
                         readOnly
                         value={shareUrl}
-                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600"
+                        className="flex-1 px-3 py-2 bg-transparent text-xs text-slate-600 focus:outline-none"
                       />
                       <button 
                         onClick={copyToClipboard}
-                        className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all"
+                        className="p-3 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm active:scale-95"
                       >
-                        {isCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-600" />}
+                        {isCopied ? <Check size={18} className="text-emerald-500" /> : <Copy size={18} />}
                       </button>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-400 text-center">
-                    任何人擁有此連結皆可查看此分析報告。
-                  </p>
+
+                  <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100/50">
+                    <p className="text-[10px] text-blue-600/70 font-medium leading-relaxed italic text-center">
+                      提示：獲得連結的人可以直接在瀏覽器查看這份 AI 客服滿意度分析報告，且不需要登入任何帳號。
+                    </p>
+                  </div>
+
+                  <button 
+                    onClick={() => setShowSaveModal(false)}
+                    className="w-full py-3.5 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-all shadow-lg active:scale-[0.98]"
+                  >
+                    完成
+                  </button>
                 </div>
               )}
             </div>

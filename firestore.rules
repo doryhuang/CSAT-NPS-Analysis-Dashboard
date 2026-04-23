@@ -5,8 +5,9 @@ service cloud.firestore {
     // Helper functions
     function isValidReport(data) {
       return data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.type in ['full', 'pm'] &&
-             data.analyzedData is list &&
+             data.type in ['full', 'pm', 'insight_only'] &&
+             (data.keys().hasAny(['analyzedData']) ? data.analyzedData is list : true) &&
+             (data.keys().hasAny(['compressedData']) ? data.compressedData is string : true) &&
              data.stats is map &&
              data.createdAt is timestamp;
     }
